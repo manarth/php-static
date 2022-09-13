@@ -3,6 +3,10 @@
 This Docker definition compiles PHP and exports statically-linked executables
 of PHP-CLI and PHP-FPM for use in containerisation.
 
+## Usage
+
+Run `docker build -t php-static`
+
 ## References
 
 - [PHP source code](https://github.com/php/php-src)

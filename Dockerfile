@@ -10,6 +10,11 @@ ARG REPO="php-static"
 ##################
 FROM ghcr.io/manarth/libzip-static:1.9.2 AS libzip
 
+##################
+# INCLUDE LIBICU #
+##################
+FROM ghcr.io/manarth/icu-static AS icu
+
 #############
 # BUILD PHP #
 #############
@@ -32,10 +37,10 @@ RUN apk add autoconf automake bison g++ gcc libc-dev libtool make re2c
 COPY --from=libzip /lib/libzip.a /lib/
 
 # Extension-specific libraries.
-RUN apk add bzip2-dev curl-dev icu-dev libgcrypt-dev libpq-dev libpng-dev libsodium-dev libxml2-dev libxslt-dev libzip-dev ncurses-dev oniguruma-dev readline-dev sqlite-dev tidyhtml-dev
+RUN apk add bzip2-dev curl-dev icu-dev libgcrypt-dev libjpeg-turbo-dev libpq-dev libpng-dev libsodium-dev libwebp-dev  libxml2-dev libxslt-dev libzip-dev ncurses-dev oniguruma-dev readline-dev sqlite-dev tidyhtml-dev
 
 # Static versions of the libraries for extensions.
-RUN apk add bzip2-static curl-static icu-static libgcrypt-static libgpg-error-static libpng-static libsodium-static ncurses-static readline-static sqlite-static tidyhtml-static zlib-static
+RUN apk add bzip2-static curl-static icu-static libgcrypt-static libgpg-error-static libjpeg-turbo-static libpng-static libsodium-static libwebp-static ncurses-static readline-static sqlite-static tidyhtml-static zlib-static
 
 # Static lib dependencies of the static libs.
 RUN apk add brotli-static nghttp2-static openssl-libs-static zstd-static
@@ -48,6 +53,9 @@ RUN git clone --depth 1 --branch ${APCU_VER} ${APCU_SRC} /opt/php-src/ext/apcu
 # Core patches for static linking.
 COPY readline_cli.patch /tmp
 RUN patch -p1 < /tmp/readline_cli.patch
+
+# Copy icu-static from the build, so the data file is packaged.
+COPY --from=icu /usr/lib/* /usr/lib
 
 # Initialise the build environment.
 RUN ./buildconf --force
@@ -82,6 +90,7 @@ RUN ./configure \
   # Standard extensions.
   --with-bz2 \
   --with-curl \
+  --with-jpeg \
   --with-libxml \
   --with-openssl \
   --with-pdo-mysql \
@@ -90,6 +99,7 @@ RUN ./configure \
   --with-sodium \
   --with-sqlite3 \
   --with-tidy \
+  --with-webp \
   --with-xsl \
   --with-zip \
   --with-zlib \
@@ -127,7 +137,7 @@ RUN printf "%s\n%s\n\t%s\n\n" \
     '$(BUILD_STATIC_FPM)' \
     | tee -a Makefile
 
-# Compile CLI.
+# # Compile CLI.
 RUN make cli-static -j $(nproc)
 RUN strip --strip-all /opt/php-src/sapi/cli/php
 
@@ -138,6 +148,19 @@ RUN make ext/readline/readline_cli.lo
 # Compile PHP-FPM.
 RUN make fpm-static -j $(nproc)
 RUN strip --strip-all /opt/php-src/sapi/fpm/php-fpm
+
+ARG TARGETARCH
+
+# UPX release links.
+# https://github.com/upx/upx/releases/download/v3.96/upx-3.96-amd64_linux.tar.xz
+# https://github.com/upx/upx/releases/download/v3.96/upx-3.96-arm64_linux.tar.xz
+ADD https://github.com/upx/upx/releases/download/v3.96/upx-3.96-${TARGETARCH}_linux.tar.xz /tmp/upx.tar.xz
+RUN cd /tmp && tar -xJf /tmp/upx.tar.xz
+RUN mv /tmp/upx-3.96-${TARGETARCH}_linux/upx /usr/bin/upx
+
+# Don't run UPX for arm64 until the issues have been identified and resolved.
+RUN (test `uname -m` != "aarch64" && upx -9 /opt/php-src/sapi/cli/php) || true
+RUN (test `uname -m` != "aarch64" && upx -9 /opt/php-src/sapi/fpm/php-fpm) || true
 
 # Package to a minimal release.
 FROM scratch as dist
